@@ -178,7 +178,7 @@ class TaskApiIntegrationTest {
         org.junit.jupiter.api.Assertions.assertFalse(response.contains("NoResourceFoundException"));
         org.junit.jupiter.api.Assertions.assertFalse(response.contains("org.springframework"));
         org.junit.jupiter.api.Assertions.assertFalse(response.contains("\"trace\""));
-        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\tat "));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\\tat "));
         org.junit.jupiter.api.Assertions.assertFalse(response.contains("java.lang."));
     }
 
