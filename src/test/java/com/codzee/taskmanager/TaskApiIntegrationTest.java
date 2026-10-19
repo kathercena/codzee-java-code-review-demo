@@ -71,6 +71,22 @@ class TaskApiIntegrationTest {
     }
 
     @Test
+    void createTaskReturnsLocationForCreatedResource() throws Exception {
+        String request = """
+                {"title":"Create location test","description":"Check resource URI","status":"TODO","priority":"HIGH"}
+                """;
+
+        var result = mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andReturn();
+        String created = result.getResponse().getContentAsString();
+        long id = objectMapper.readTree(created).get("id").asLong();
+        var location = java.net.URI.create(result.getResponse().getHeader("Location"));
+        org.junit.jupiter.api.Assertions.assertEquals("/api/tasks/" + id, location.getPath());
+    }
+
+    @Test
     void invalidBodyAndPaginationReturnStructuredBadRequest() throws Exception {
         mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\" \",\"status\":\"TODO\",\"priority\":\"HIGH\"}"))
