@@ -13,7 +13,9 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -75,16 +77,109 @@ class TaskApiIntegrationTest {
         mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\" \",\"status\":\"TODO\",\"priority\":\"HIGH\"}"))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Request validation failed"))
                 .andExpect(jsonPath("$.details.title").exists());
 
         mockMvc.perform(get("/api/tasks").param("size", "1000"))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.details").exists());
+
+        mockMvc.perform(get("/api/tasks").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"));
+
+        mockMvc.perform(get("/api/tasks").param("status", "NOT_A_STATUS"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"));
 
         mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"ok\",\"status\":\"INVALID\",\"priority\":\"HIGH\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400));
+
+        mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content("{\"title\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.details").exists());
     }
+
+    @Test
+    void unsupportedMethodAndMediaTypeKeepFrameworkStatuses() throws Exception {
+        mockMvc.perform(patch("/api/tasks/1"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", org.hamcrest.Matchers.containsString("GET")))
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(jsonPath("$.error").value("Method Not Allowed"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.details").exists());
+
+        mockMvc.perform(post("/api/tasks").contentType(MediaType.TEXT_PLAIN).content("task"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.status").value(415))
+                .andExpect(jsonPath("$.error").value("Unsupported Media Type"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.details").exists());
+    }
+
+    @Test
+    void missingTasksReturnStructuredNotFoundForGetUpdateAndDelete() throws Exception {
+        long missingId = 999999L;
+        String update = """
+                {"title":"Still missing","description":"No task exists","status":"TODO","priority":"LOW"}
+                """;
+
+        mockMvc.perform(get("/api/tasks/{id}", missingId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.details").exists());
+
+        mockMvc.perform(put("/api/tasks/{id}", missingId)
+                        .contentType(MediaType.APPLICATION_JSON).content(update))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.details").exists());
+
+        mockMvc.perform(delete("/api/tasks/{id}", missingId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.details").exists());
+    }
+
+    @Test
+    void unknownRouteReturnsStructuredNotFoundWithoutInternalDetails() throws Exception {
+        String response = mockMvc.perform(get("/api/nope"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").value("Requested resource was not found"))
+                .andExpect(jsonPath("$.details").value(org.hamcrest.Matchers.anEmptyMap()))
+                .andReturn().getResponse().getContentAsString();
+
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("NoResourceFoundException"));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("org.springframework"));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\"trace\""));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\\tat "));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("java.lang."));
+    }
+
 }
