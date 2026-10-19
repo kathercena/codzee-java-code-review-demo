@@ -3,15 +3,19 @@ package com.codzee.taskmanager.api;
 import com.codzee.taskmanager.api.dto.ErrorResponse;
 import com.codzee.taskmanager.service.TaskNotFoundException;
 import jakarta.validation.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -52,6 +56,16 @@ public class ApiExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "Request contains an invalid or malformed value", Map.of());
     }
 
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ErrorResponse> handleMethodNotAllowed(HttpRequestMethodNotSupportedException exception) {
+        return response(HttpStatus.METHOD_NOT_ALLOWED, "Request method is not supported", exception.getHeaders());
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    ResponseEntity<ErrorResponse> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException exception) {
+        return response(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Request media type is not supported", exception.getHeaders());
+    }
+
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     ErrorResponse handleUnexpected(Exception exception) {
@@ -61,5 +75,9 @@ public class ApiExceptionHandler {
 
     private ErrorResponse error(HttpStatus status, String message, Map<String, String> details) {
         return new ErrorResponse(Instant.now(), status.value(), status.getReasonPhrase(), message, details);
+    }
+
+    private ResponseEntity<ErrorResponse> response(HttpStatus status, String message, HttpHeaders headers) {
+        return ResponseEntity.status(status).headers(headers).body(error(status, message, Map.of()));
     }
 }
