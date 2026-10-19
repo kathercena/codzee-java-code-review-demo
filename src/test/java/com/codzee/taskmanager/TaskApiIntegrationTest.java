@@ -76,14 +76,21 @@ class TaskApiIntegrationTest {
                 {"title":"Create location test","description":"Check resource URI","status":"TODO","priority":"HIGH"}
                 """;
 
-        var result = mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content(request))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").isNumber())
-                .andReturn();
-        String created = result.getResponse().getContentAsString();
-        long id = objectMapper.readTree(created).get("id").asLong();
-        var location = java.net.URI.create(result.getResponse().getHeader("Location"));
-        org.junit.jupiter.api.Assertions.assertEquals("/api/tasks/" + id, location.getPath());
+        var result = mockMvc.perform(post("/api/tasks?dryRun=1")
+                .contentType(MediaType.APPLICATION_JSON).content(request));
+        long id = objectMapper.readTree(result.andReturn().getResponse().getContentAsString()).get("id").asLong();
+
+        try {
+            result.andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.id").isNumber());
+
+            var location = java.net.URI.create(result.andReturn().getResponse().getHeader("Location"));
+            org.junit.jupiter.api.Assertions.assertEquals("/api/tasks/" + id, location.getPath());
+            org.junit.jupiter.api.Assertions.assertNull(location.getQuery());
+        } finally {
+            mockMvc.perform(delete("/api/tasks/{id}", id))
+                    .andExpect(status().isNoContent());
+        }
     }
 
     @Test

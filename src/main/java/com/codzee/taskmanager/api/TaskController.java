@@ -37,7 +37,7 @@ public class TaskController {
     @PostMapping
     public ResponseEntity<TaskResponse> create(@Valid @RequestBody TaskRequest request) {
         TaskResponse created = taskService.create(request);
-        var location = ServletUriComponentsBuilder.fromCurrentRequest()
+        var location = ServletUriComponentsBuilder.fromCurrentRequestUri()
                 .path("/{id}")
                 .buildAndExpand(created.id())
                 .toUri();
