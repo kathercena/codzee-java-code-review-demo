@@ -2,10 +2,12 @@ package com.codzee.taskmanager;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -17,11 +19,11 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -36,41 +38,59 @@ class TaskPaginationIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    private final List<Long> createdTaskIds = new ArrayList<>();
+
+    @AfterEach
+    void cleanUpCreatedTasks() {
+        List<Throwable> cleanupFailures = new ArrayList<>();
+        for (Long id : createdTaskIds) {
+            try {
+                int statusCode = mockMvc.perform(delete("/api/tasks/{id}", id))
+                        .andReturn().getResponse().getStatus();
+                if (statusCode != HttpStatus.NO_CONTENT.value()) {
+                    cleanupFailures.add(new AssertionError(
+                            "Expected HTTP 204 when deleting test-created task " + id + " but got " + statusCode));
+                }
+            } catch (Exception exception) {
+                cleanupFailures.add(exception);
+            }
+        }
+        createdTaskIds.clear();
+
+        if (!cleanupFailures.isEmpty()) {
+            AssertionError cleanupError = new AssertionError(
+                    "Failed to clean up " + cleanupFailures.size() + " test-created task(s)");
+            cleanupFailures.forEach(cleanupError::addSuppressed);
+            throw cleanupError;
+        }
+    }
+
     @Test
     void taskListPaginationMetadataBoundariesAndStatusFiltersAreConsistent() throws Exception {
         long initialAll = fetchPage(0, PAGE_SIZE, null).totalElements();
         long initialTodo = fetchPage(0, PAGE_SIZE, "TODO").totalElements();
         long initialDone = fetchPage(0, PAGE_SIZE, "DONE").totalElements();
-        List<Long> createdIds = new ArrayList<>();
+        List<Long> createdTodoIds = createTasks("TODO", 5);
+        List<Long> createdDoneIds = createTasks("DONE", 3);
+        List<Long> allCreatedIds = new ArrayList<>(createdTodoIds);
+        allCreatedIds.addAll(createdDoneIds);
 
-        try {
-            List<Long> createdTodoIds = createTasks("TODO", 5, createdIds);
-            List<Long> createdDoneIds = createTasks("DONE", 3, createdIds);
-            List<Long> allCreatedIds = new ArrayList<>(createdTodoIds);
-            allCreatedIds.addAll(createdDoneIds);
+        long expectedAll = initialAll + allCreatedIds.size();
+        assertAllPages(null, expectedAll, allCreatedIds);
 
-            long expectedAll = initialAll + allCreatedIds.size();
-            assertAllPages(null, expectedAll, allCreatedIds);
+        long expectedTodo = initialTodo + createdTodoIds.size();
+        assertAllPages("TODO", expectedTodo, createdTodoIds);
 
-            long expectedTodo = initialTodo + createdTodoIds.size();
-            assertAllPages("TODO", expectedTodo, createdTodoIds);
+        long expectedDone = initialDone + createdDoneIds.size();
+        assertAllPages("DONE", expectedDone, createdDoneIds);
 
-            long expectedDone = initialDone + createdDoneIds.size();
-            assertAllPages("DONE", expectedDone, createdDoneIds);
-
-            int totalPages = totalPages(expectedAll, PAGE_SIZE);
-            ApiPage beyondLastPage = fetchPage(totalPages, PAGE_SIZE, null);
-            assertEquals(totalPages, beyondLastPage.page());
-            assertEquals(PAGE_SIZE, beyondLastPage.size());
-            assertTrue(beyondLastPage.content().isEmpty());
-            assertEquals(expectedAll, beyondLastPage.totalElements());
-            assertEquals(totalPages, beyondLastPage.totalPages());
-        } finally {
-            for (Long id : createdIds) {
-                mockMvc.perform(delete("/api/tasks/{id}", id))
-                        .andExpect(status().isNoContent());
-            }
-        }
+        int totalPages = totalPages(expectedAll, PAGE_SIZE);
+        ApiPage beyondLastPage = fetchPage(totalPages, PAGE_SIZE, null);
+        assertEquals(totalPages, beyondLastPage.page());
+        assertEquals(PAGE_SIZE, beyondLastPage.size());
+        assertTrue(beyondLastPage.content().isEmpty());
+        assertEquals(expectedAll, beyondLastPage.totalElements());
+        assertEquals(totalPages, beyondLastPage.totalPages());
     }
 
     private void assertAllPages(String statusFilter, long expectedTotal, List<Long> expectedCreatedIds)
@@ -101,7 +121,7 @@ class TaskPaginationIntegrationTest {
         assertTrue(observedIds.containsAll(expectedCreatedIds));
     }
 
-    private List<Long> createTasks(String taskStatus, int count, List<Long> createdIds) throws Exception {
+    private List<Long> createTasks(String taskStatus, int count) throws Exception {
         List<Long> ids = new ArrayList<>();
         for (int index = 0; index < count; index++) {
             String requestBody = """
@@ -110,13 +130,17 @@ class TaskPaginationIntegrationTest {
             var result = mockMvc.perform(post("/api/tasks")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(requestBody));
-            MvcResult mvcResult = result.andReturn();
-            long id = objectMapper.readTree(mvcResult.getResponse().getContentAsString()).get("id").asLong();
-            createdIds.add(id);
+            MvcResult mvcResult = result.andExpect(status().isCreated()).andReturn();
+            JsonNode responseBody = objectMapper.readTree(mvcResult.getResponse().getContentAsString());
+            assertTrue(responseBody.has("id"), "Create response must contain an id");
+            JsonNode idNode = responseBody.get("id");
+            assertNotNull(idNode, "Create response id must not be null");
+            assertTrue(idNode.isIntegralNumber() && idNode.canConvertToLong(),
+                    "Create response id must be an integer that fits in a long");
+            long id = idNode.longValue();
+            createdTaskIds.add(id);
             ids.add(id);
-
-            result.andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.id").value(id));
+            assertTrue(id > 0, "Create response id must be positive");
         }
         return ids;
     }
@@ -133,13 +157,41 @@ class TaskPaginationIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         JsonNode root = objectMapper.readTree(response);
+        assertTrue(root.has("content"), "Pagination response must contain a content field");
+        JsonNode contentNode = root.get("content");
+        assertNotNull(contentNode, "Pagination response content must not be null");
+        assertTrue(contentNode.isArray(), "Pagination response content must be an array");
+
         List<TaskItem> content = new ArrayList<>();
-        for (JsonNode item : root.path("content")) {
-            content.add(new TaskItem(item.path("id").asLong(), item.path("status").asText()));
+        for (JsonNode item : contentNode) {
+            JsonNode idNode = item.get("id");
+            assertNotNull(idNode, "Each task in content must contain an id");
+            assertTrue(idNode.isIntegralNumber() && idNode.canConvertToLong(),
+                    "Each task id must be an integer that fits in a long");
+            JsonNode statusNode = item.get("status");
+            assertNotNull(statusNode, "Each task in content must contain a status");
+            assertTrue(statusNode.isTextual(), "Each task status must be a string");
+            content.add(new TaskItem(idNode.longValue(), statusNode.textValue()));
         }
 
-        return new ApiPage(root.path("page").asInt(), root.path("size").asInt(),
-                root.path("totalElements").asLong(), root.path("totalPages").asInt(), content);
+        return new ApiPage(requiredInt(root, "page"), requiredInt(root, "size"),
+                requiredLong(root, "totalElements"), requiredInt(root, "totalPages"), content);
+    }
+
+    private int requiredInt(JsonNode root, String field) {
+        JsonNode value = root.get(field);
+        assertNotNull(value, "Pagination response must contain " + field);
+        assertTrue(value.isIntegralNumber() && value.canConvertToInt(),
+                "Pagination response " + field + " must be an integer");
+        return value.intValue();
+    }
+
+    private long requiredLong(JsonNode root, String field) {
+        JsonNode value = root.get(field);
+        assertNotNull(value, "Pagination response must contain " + field);
+        assertTrue(value.isIntegralNumber() && value.canConvertToLong(),
+                "Pagination response " + field + " must be an integer");
+        return value.longValue();
     }
 
     private int totalPages(long totalElements, int size) {
