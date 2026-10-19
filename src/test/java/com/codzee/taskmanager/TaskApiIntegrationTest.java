@@ -163,4 +163,23 @@ class TaskApiIntegrationTest {
                 .andExpect(jsonPath("$.message").exists())
                 .andExpect(jsonPath("$.details").exists());
     }
+
+    @Test
+    void unknownRouteReturnsStructuredNotFoundWithoutInternalDetails() throws Exception {
+        String response = mockMvc.perform(get("/api/nope"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.message").value("Requested resource was not found"))
+                .andExpect(jsonPath("$.details").value(org.hamcrest.Matchers.anEmptyMap()))
+                .andReturn().getResponse().getContentAsString();
+
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("NoResourceFoundException"));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("org.springframework"));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\"trace\""));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("\tat "));
+        org.junit.jupiter.api.Assertions.assertFalse(response.contains("java.lang."));
+    }
+
 }
